@@ -1,0 +1,2 @@
+# KlipChop
+Clipboard text mangling
