@@ -32,28 +32,31 @@ KlipChop.py  - Tray app to assist with clipboard operations.
 import sys
 import os
 import re
+import locale
 from typing import DefaultDict
-from pystray import Icon as icon, Menu as menu, MenuItem as menuitem
+# from pystray import Icon as icon, Menu as menu,.MenuItem as.MenuItem
 from PIL import Image
 from pathlib import Path
 from io import StringIO
 
-import argh
 import win32clipboard
 import win32ui
+
+import pystray as st
 import yaml
 import texttable
-from OuiLookup import OuiLookup
 
 
+
+__appname__ = 'KlipChop'
 __author__ = "Mark Butterworth"
+__email__ = 'mark@markbutterworth.net'
 __copyright__ = "Copyright (C) 2021 Mark Butterworth"
 __license__ = "MIT"
-__version__ = '0.1.1 20211127'
+__version__ = '0.1.5 20212120'
 
 
 # Setup later:
-appname = None
 configdir = None
 configpath = None
 # Default config:
@@ -62,6 +65,7 @@ config = {
     'separator': ',',
     'hexprefix': True,
     'overwrite': False,
+    'LDEV-ranges': True,
 }
 
 
@@ -75,7 +79,6 @@ def configload():
 
 
 def configsave():
-    global config
     dirname = Path(configpath).parent
     if not dirname.is_dir(): os.makedirs(dirname)
     with open(configpath, 'w') as fd:
@@ -85,7 +88,15 @@ def configsave():
 def get_clipboard():
     try:
         win32clipboard.OpenClipboard()
-        data = win32clipboard.GetClipboardData(win32clipboard.CF_TEXT)
+        data = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+        # Below helps with a bug in getting excel clipboard data
+        # See: https://stackoverflow.com/questions/66756315/using-win32clipboard-getclipboarddata-to-get-copied-excel-table-returns-chinese
+        # it's using the size of the memory structure to determine how many bytes are in it.
+        # However, the documentation for the clipboard formats states this:
+        # CF_TEXT: Text format. Each line ends with a carriage return/linefeed (CR-LF) combination. A null character signals the end of the data. Use this format for ANSI text.
+        # CF_UNICODETEXT: Unicode text format. Each line ends with a carriage return/linefeed (CR-LF) combination. A null character signals the end of the data.
+        if '\x00' in data:
+            data = data[:data.find('\x00')]
     except TypeError as exc:
         print(exc)
         return None # it's not text so ignore
@@ -106,9 +117,13 @@ def set_clipboard(text):
         win32clipboard.CloseClipboard()
 
 
-def getOui(address):
-    # for WWN remove first nibble, e.g. '50060E800882CC62' to '0060E800882CC62'
-    return OuiLookup().query(address)
+def get_lines():
+    data = get_clipboard()
+    for line in data.splitlines():
+        line = line.strip()   #.decode('utf-8', errors='ignore')
+        # if not line.isprintable():  # No longer needed as clipboard bug fixed above
+        #     continue
+        yield line
 
 
 def make_table (table, frameH = '-', frameV = '|', frameX = '+'):
@@ -125,17 +140,23 @@ def make_table (table, frameH = '-', frameV = '|', frameX = '+'):
     return output
 
 
-def get_lines():
-    data = get_clipboard()
-    for line in data.splitlines():
-        line = line.strip().decode('utf-8', errors='ignore')
-        if not line.isprintable():
-            continue
-        yield line
+def nlist2ranges(values, hex=False):
+    rlist = []
+
+    hexwidth = 0
+    for i in sorted(values, key=lambda x: int(x, 16) if hex else x):
+        if hex:
+            if len(i) > hexwidth: hexwidth = len(i)
+            i = int(i, 16)
+        if not rlist or rlist[-1][-1]+1 != i:
+            rlist.append([i])
+        else:
+            rlist[-1].append(i)
+    fmt = f'0{hexwidth}x' if hex else 'd'
+    return [ f'{x[0]:{fmt}}' if len(x)==1 else f'{x[0]:{fmt}}-{x[-1]:{fmt}}' for x in rlist ]
 
 
 def action_uniquelines(icon, item):
-    global sortflag
     result = list()
     count = 0
     for line in get_lines():
@@ -147,11 +168,10 @@ def action_uniquelines(icon, item):
         result = sorted(result)
     result = '\n'.join(result)
     set_clipboard(result)
-    icon.notify(f'{count} unique lines')
+    icon.notify(f'{count} unique lines', __appname__)
     
 
 def action_lines2list(icon, item):
-    global sortflag
     result = list()
     count = 0
     for line in get_lines():
@@ -163,11 +183,10 @@ def action_lines2list(icon, item):
         result = sorted(result)
     result = config['separator'].join(result)
     set_clipboard(result)
-    icon.notify(f'{count} unique lines converted into long CSV list.')
+    icon.notify(f'{count} unique lines converted into long CSV list.', __appname__)
 
 
 def action_splitlines(icon, item):
-    global sortflag
     result = list()
     count = 0
     for line in get_lines():
@@ -180,11 +199,10 @@ def action_splitlines(icon, item):
     count = len(result) 
     result = '\n'.join(result)
     set_clipboard(result)
-    icon.notify(f'Text converted into {count} lines.')
+    icon.notify(f'Text converted into {count} lines.', __appname__)
 
 
 def action_table2csv(icon, item):
-    global sortflag
     result = list()
     count = 0
     pat_frameonly = re.compile(r'^[-+=\|\s]+$')
@@ -204,11 +222,10 @@ def action_table2csv(icon, item):
     
     result = '\n'.join(result)
     set_clipboard(result)
-    icon.notify(f'Table converted into {count} CSV rows.')
+    icon.notify(f'Table converted into {count} CSV rows.', __appname__)
 
 
 def action_csv2table(icon, item):
-    global sortflag
     count = 0
     result = ''
     tables = list()
@@ -237,55 +254,103 @@ def action_csv2table(icon, item):
         result += '\n'
 
     set_clipboard(result)
-    icon.notify(f'CSV converted into {count} table rows.')
+    icon.notify(f'CSV converted into {count} table rows.', __appname__)
+
+
+def action_hex2dec(icon, item):
+    icon.notify('Not yet implemented', __appname__)
+
+
+def action_dec2hex(icon, item):
+    icon.notify('Not yet implemented', __appname__)
 
 
 def action_ldev2list(icon, item):
-    global sortflag
     pattern = re.compile('([0-9A-F]{4,6})', re.IGNORECASE)
     result = list()
     count = 0
     for line in get_lines():
         line = line.replace(':', '')
-        m = pattern.search(line)
-        if m:
-            ldev = m.group(1)
+        m = pattern.findall(line)
+        for ldev in m:
             if len(ldev) == 6 and ldev.startswith('00'):
                 ldev = ldev[2:]
             if ldev not in result:
                 result.append(ldev)
                 count += 1
 
-    if config['sort']:
+    if config['LDEV-ranges']:
+        result = nlist2ranges(result, hex=True)
+    elif config['sort']:
         result = sorted(result)
+    
     result = config['separator'].join(result)
     set_clipboard(result)
-    icon.notify(f'{count} LDEVs converted into long CSV list.')
+    icon.notify(f'{count} LDEVs converted into long CSV list.', __appname__)
+
+
+def action_wwnoui(icon, item, extractflag):
+    icon.notify('Not yet implemented', __appname__)
+
+
+def action_calculate(icon, item):
+    dp = locale.localeconv()['decimal_point']
+    pattern = re.compile(f'(0x[\da-f]+|\d+\.?\d*|\.\d+)', re.IGNORECASE)
+
+    def numfinder(dp=None):
+        for line in get_lines():
+            if dp:
+                line = line.replace(dp, '.')   # change from locale decimal sep to normnal
+
+            m = pattern.findall(line)
+            for n in m:
+                if '.' in n:
+                    yield float(n)
+                elif n.lower().startswith('0x'):
+                    yield int(n, 16)
+                else:
+                    yield int(n)
+
+    numbers = list(numfinder())  # try looking for normal first
+    if not numbers and dp != '.':   # else try using locale decimal point
+        numbers = list(numfinder(dp))
+
+    count = len(numbers)
+    tot = sum(numbers)
+    mean = tot / count if count > 0 else 'NA'
+    result = f'Count:{count:,d}\nsum:{tot:,f}\naverage:{mean:,f}\nmin:{min(numbers):,f}\nmax:{max(numbers):,f}\n'
+    set_clipboard(result)
+    icon.notify(result, __appname__)
 
     
 def action_setsort(icon, item):
-    global config
     config['sort'] = not config['sort']
     configsave()
 
 def action_sethex(icon, item):
-    global config
     config['hexprefix'] = not config['hexprefix']
     configsave()
 
 def action_setsep(separator):
-    global config
     config['separator'] = separator
     configsave()
 
 
-def check_sep(separator):
-    global config
+def current_sep(separator):
     return config['separator'] == separator
 
 
 def action_about(icon, item):
-    win32ui.MessageBox(f'Version: {__version__}', appname)
+    win32ui.MessageBox(f'''
+Version: {__version__}
+
+Python:{sys.version}
+
+Progdir:{getprogdir()}
+
+Any ideas for repeated mundane clipboard tasks?
+Contact: {__email__}
+''', __appname__)
 
 
 def action_exit(icon, item):
@@ -294,64 +359,76 @@ def action_exit(icon, item):
     icon.stop()
 
 
-def trayapp():
-    global config, configdir, configpath, appname
-
+def getprogdir():
+    """ 
+    If the application is run as a bundle, the PyInstaller bootloader
+    extends the sys module by a flag frozen=True and sets the app 
+    path into variable _MEIPASS'.  Cx_freeze requires lookup of the sys.execuatable
+    PyInstaller Version 5.0 will change to __file__ as a full abspath. 
+    """
     if getattr(sys, 'frozen', False):
-        # If the application is run as a bundle, the PyInstaller bootloader
-        # extends the sys module by a flag frozen=True and sets the app 
-        # path into variable _MEIPASS'.
-        application_path = Path(sys._MEIPASS)
+        return getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
     else:
-        application_path = Path(__file__).absolute()
+        return os.path.dirname(os.path.abspath(sys.modules['__main__'].__file__))
 
-    appname = application_path.stem   # basename without extention
 
-    configdir = Path.home() / f'.{appname}'
-    configpath = configdir / f'{appname}.yaml'
+def trayapp():
+    global configdir, configpath
+
+    progdir = Path(getprogdir())
+
+    configdir = Path.home() / f'.{__appname__}'
+    configpath = configdir / f'{__appname__}.yaml'
     if configpath.exists():
         configload()
 
-    image = Image.open('icon.png')
+    image = Image.open(progdir / f'{__appname__}.png')
 
-    sepmenu = menu(
-        menuitem('Comma ","', lambda item: action_setsep(','), radio=True,
-            checked=lambda item: check_sep(',')),
-        menuitem('Space " "', lambda item: action_setsep(' '), radio=True,
-            checked=lambda item: check_sep(' ')),
-        menuitem('Semi-colon ";"', lambda item: action_setsep(';'), radio=True,
-            checked=lambda item: check_sep(';')),
-        menuitem('Forward-slash "/"', lambda item: action_setsep('/'), radio=True,
-            checked=lambda item: check_sep('/')),
-        menuitem('Back-slash "\\"', lambda item: action_setsep('\\'), radio=True,
-            checked=lambda item: check_sep('\\')),
-        menuitem('Bar "|"', lambda item: action_setsep('|'), radio=True,
-            checked=lambda item: check_sep('|')),
+
+    sepmenu = st.Menu(
+        st.MenuItem('Comma ","', lambda: action_setsep(','), radio=True,
+            checked=lambda _: current_sep(',')),
+        st.MenuItem('Comma space ", "', lambda: action_setsep(', '), radio=True,
+            checked=lambda _: current_sep(', ')),
+        st.MenuItem('Space " "', lambda: action_setsep(' '), radio=True,
+            checked=lambda _: current_sep(' ')),
+        st.MenuItem('Semi-colon ";"', lambda: action_setsep(';'), radio=True,
+            checked=lambda _: current_sep(';')),
+        st.MenuItem('Forward-slash "/"', lambda: action_setsep('/'), radio=True,
+            checked=lambda _: current_sep('/')),
+        st.MenuItem('Back-slash "\\"', lambda: action_setsep('\\'), radio=True,
+            checked=lambda _: current_sep('\\')),
+        st.MenuItem('Bar "|"', lambda: action_setsep('|'), radio=True,
+            checked=lambda _: current_sep('|')),
     )
 
-    mainmenu = menu( 
-        menuitem('Unique lines', action_uniquelines),
-        menuitem('Lines to unique CSV list', action_lines2list),
-        menuitem('Split CSV text to lines', action_splitlines),
-        menu.SEPARATOR,
-        menuitem('Table to CSV (Converts bars "|" and dashes "-")', action_table2csv),
-        menuitem('CSV to text table', action_csv2table),
-        menu.SEPARATOR,
-        menuitem('Hex to decimal', action_splitlines),
-        menuitem('Decimal to Hex', action_splitlines),
-        menu.SEPARATOR,
-        menuitem('LDEV lines to unique CSV list', action_ldev2list),
-        menuitem('WWN OUI to name', action_ldev2list),
-        menu.SEPARATOR,
-        menuitem('Sort results', action_setsort, checked=lambda x: config['sort']),
-        menuitem('Prefix Hex with 0x', action_sethex, checked=lambda x: config['hexprefix']),
-        menuitem('Separator', sepmenu),
-        menu.SEPARATOR,
-        menuitem('About', action_about),
-        menuitem('Exit', action_exit),
+    mainmenu = st.Menu(
+        st.MenuItem('Unique lines', action_uniquelines), # default=True),
+        st.MenuItem('Lines to unique CSV list', action_lines2list),
+        st.MenuItem('Split CSV text to lines', action_splitlines),
+        st.Menu.SEPARATOR,
+        st.MenuItem('Table to CSV (converts ascii framed text)', action_table2csv),
+        st.MenuItem('CSV to text table (and the reverse)', action_csv2table),
+        st.Menu.SEPARATOR,
+        st.MenuItem('Hex to decimal', action_hex2dec),
+        st.MenuItem('Decimal to Hex', action_dec2hex),
+        st.Menu.SEPARATOR,
+        st.MenuItem('LDEV reduced to unique list', action_ldev2list),
+        st.MenuItem('Annotate WWN/NAA OUI', lambda icon,item: action_wwnoui(icon, item, False)),
+        st.MenuItem('Extract WWN/NAA OUI', lambda icon,item: action_wwnoui(icon, item, True)),
+        st.Menu.SEPARATOR,
+        st.MenuItem('Calculator (count, sum, min, max, average, median)', action_calculate),
+        st.Menu.SEPARATOR,
+        st.MenuItem('Sort results', action_setsort, checked=lambda x: config['sort']),
+        st.MenuItem('Prefix Hex with 0x', action_sethex, checked=lambda x: config['hexprefix']),
+        st.MenuItem('Reduce LDEV ranges', action_setsort, checked=lambda x: config['LDEV-ranges']),
+        st.MenuItem('Separator', sepmenu),
+        st.Menu.SEPARATOR,
+        st.MenuItem('About', action_about),
+        st.MenuItem('Exit', action_exit),
         )
 
-    app = icon(appname, image, menu=mainmenu)
+    app = st.Icon(__appname__, image, menu=mainmenu)
     return app.run()
 
 
