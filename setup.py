@@ -9,7 +9,7 @@ from cx_Freeze import setup, Executable
 from git2version import gitversion
 
 __appname__ = 'KlipChop',
-__version__ = '0.1.5'
+__version__ = '1.0.0'
 __description__ = 'Klip Chopping away...'
 __icon__ = 'KlipChop.ico'
 
