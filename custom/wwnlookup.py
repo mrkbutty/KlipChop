@@ -1,7 +1,15 @@
 #! /usr/bin/env python3
 # -*- coding: utf-8 -*-
+# KlipChop menu function
 
-# hitwwn.py - Generates Charts from Hitachi Storage export data.
+
+# All kllipchop customizable modules must have a main function
+# The main function is passed three variables:
+#   textlines   - Generator of clipboard lines
+#   messagefunc - function to call with notification
+#   config      - configuration dictionary
+# The main function should return a string object or a list of strings
+
 
 import re
 from dataclasses import dataclass
@@ -201,11 +209,8 @@ DFWWN = re.compile(r'(?<![\dA-Z])5([\dA-F]{6})([\dA-F]{4})([\dA-F]{4})([\dA-F])(
 ADDRESSPAT = re.compile(r'(?<![\dA-Z])[1256][\dA-F]{15}(?![\dA-Z])', re.IGNORECASE)
 
 
-def ouidecoder(text, tag=None):
+def ouidecoder(text):
     """ Find OUI from 16 byte addresses in text """
-
-    if not tag:
-        tag = '#'
 
     text = re.sub(r'[-:]', '', text)
     if not(text.strip()): return None
@@ -276,12 +281,30 @@ def ouidecoder(text, tag=None):
         ld = OuiLookup().query(' '.join(ieeelookup))   # returns a list of dicts: [{oui:vendor},...,...]
         result.extend([v for x in ld for v in x.values()])
 
-        # for i in ld:
-        #     for v in i.values():
-        #         result.append(v)
-    if not result: return None
-    return f'{tag} ' + f' {tag} '.join(result)
+    return result
 
+
+def main(textlines, messagefunc, config):
+    """
+    KlipChop func to annotate WWN with decodes of Hitachi Storage
+    """
+
+    tag = '   #'
+    result = []
+    count = 0
+    for line in textlines():
+        decodes = ouidecoder(line)
+        if decodes:
+            line = line + tag + tag.join(decodes)
+            count += len(decodes)
+
+        if config['extract-WWN'] and not decodes:
+            continue
+        result.append(line)
+        
+    result = '\n'.join(result)
+    messagefunc(f'Annotated {count} OUI')
+    return result
 
 
 if __name__ == '__main__':
@@ -306,7 +329,10 @@ HUS 110 91x40029    0A      50060E80105ADCD0
 HUS 130 92x10159    0A      50060E80103391F0
 '''
 
-    for i in testtxt.splitlines():
-        i = i.strip()
-        if i:
-            print(f'{i}\t{ouidecoder(i)}')
+    for line in testtxt.splitlines():
+        line = line.strip()
+        if line:
+            print(f'{line}\t{ouidecoder(line)}')
+
+
+    

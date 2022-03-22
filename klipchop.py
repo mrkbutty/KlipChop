@@ -29,10 +29,14 @@
 KlipChop.py  - Tray app to assist with clipboard operations.
 """
 
+import importlib
 import sys
 import os
 import re
 import locale
+import importlib.util
+import traceback
+
 from typing import DefaultDict
 # from pystray import Icon as icon, Menu as menu,.MenuItem as.MenuItem
 from PIL import Image
@@ -53,22 +57,85 @@ __author__ = "Mark Butterworth"
 __email__ = 'mark@markbutterworth.net'
 __copyright__ = "Copyright (C) 2021 Mark Butterworth"
 __license__ = "MIT"
-__version__ = '0.1.5 20212120'
+__version__ = '0.2.0 20220118'
 
 
 # Setup later:
+progdir = None
 configdir = None
 configpath = None
+
 # Default config:
 config = {
-    'sort': True,
     'separator': ',',
+    'joiner': ' ',
+    'sort': True,
     'hexprefix': True,
     'overwrite': False,
     'LDEV-ranges': True,
 }
 
+# Generator functions to make callables for menu items:
+def toggle_bool(name):
+    def inner(icon, item):
+        global config
+        config[name] = not config[name]
+        configsave()
+    return inner
 
+def get_bool(name):
+    def inner(item):
+        return config[name]
+    return inner
+
+sepmenu = st.Menu(
+    st.MenuItem('Comma ","', lambda: setsep(','), radio=True,
+        checked=lambda _: current_sep(',')),
+    st.MenuItem('Comma space ", "', lambda: setsep(', '), radio=True,
+        checked=lambda _: current_sep(', ')),
+    st.MenuItem('Space " "', lambda: setsep(' '), radio=True,
+        checked=lambda _: current_sep(' ')),
+    st.MenuItem('Semi-colon ";"', lambda: setsep(';'), radio=True,
+        checked=lambda _: current_sep(';')),
+    st.MenuItem('Forward-slash "/"', lambda: setsep('/'), radio=True,
+        checked=lambda _: current_sep('/')),
+    st.MenuItem('Back-slash "\\"', lambda: setsep('\\'), radio=True,
+        checked=lambda _: current_sep('\\')),
+    st.MenuItem('Bar "|"', lambda: setsep('|'), radio=True,
+        checked=lambda _: current_sep('|')),
+)
+
+joinmenu = st.Menu(
+    st.MenuItem('Space " "', lambda: setjoin(' '), radio=True,
+        checked=lambda _: current_join(' ')),
+    st.MenuItem('Comma ","', lambda: setjoin(','), radio=True,
+        checked=lambda _: current_join(',')),
+    st.MenuItem('Comma space ", "', lambda: setjoin(', '), radio=True,
+        checked=lambda _: current_join(', ')),
+    st.MenuItem('Semi-colon ";"', lambda: setjoin(';'), radio=True,
+        checked=lambda _: current_join(';')),
+    st.MenuItem('Forward-slash "/"', lambda: setjoin('/'), radio=True,
+        checked=lambda _: current_join('/')),
+    st.MenuItem('Back-slash "\\"', lambda: setjoin('\\'), radio=True,
+        checked=lambda _: current_join('\\')),
+    st.MenuItem('Bar "|"', lambda: setjoin('|'), radio=True,
+        checked=lambda _: current_join('|')),
+)
+
+
+optmenuitems = [
+    # st.MenuItem('Open custom script directory', action_customdir),
+    st.MenuItem('Set default separator', sepmenu),
+    st.MenuItem('Set default joiner', joinmenu),
+    st.MenuItem('Sort results', lambda: toggle_bool('sort'), checked=get_bool('sort')),
+    st.MenuItem('Prefix Hex with 0x', lambda: toggle_bool('hexprefix'), checked=get_bool('hexprefix')),
+]
+
+# Global for the dynamically loaded modules:
+moddict = dict()
+
+
+# Config file handling
 def configload():
     global config
 
@@ -85,7 +152,41 @@ def configsave():
         yaml.safe_dump(config, fd)
 
 
-def get_clipboard():
+def readmenuconfig(filename):
+    '''read a menuconfig from either the transform or custom directories'''
+    global config, optmenuitems
+
+    currentdir = Path(filename).absolute().parent
+    menu = list()
+    with open(filename) as fd:
+        for line in fd.readlines():
+            line = line.strip()
+            if not line or line.startswith('#'): continue
+            if line.startswith('@'): # include another menu
+                include = currentdir / line.strip('@')
+                if include.is_file():
+                    menu.extend(readmenuconfig(include))
+            elif line.startswith('$'): # add option to config
+                line = line.strip('$')
+                parts = [ i.strip() for i in line.split('=', 3) ]
+                if len(parts) == 4:
+                    (name, opttype, default, params) = parts
+                    if opttype == 'bool':
+                        config[name] = config.get(name, default)
+                        optmenuitems.append(st.MenuItem(params, toggle_bool(name), checked=get_bool(name)))
+            elif line.startswith('---'): # add a seperator
+                menu.append(('---', None))
+            else:
+                parts = [ x.strip() for x in line.split(':', 1) ]
+                if len(parts) == 2:
+                    name, description = parts
+                    fullpath = currentdir / name
+                    if fullpath.is_file():
+                        menu.append((str(fullpath), description))
+    return menu
+
+
+def get_clipboard_text():
     try:
         win32clipboard.OpenClipboard()
         data = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
@@ -105,7 +206,9 @@ def get_clipboard():
     return data
 
 
-def set_clipboard(text):
+def set_clipboard_text(text):
+    if isinstance(text, list):
+        text = '\n'.join(text)
     try:
         win32clipboard.OpenClipboard()
         win32clipboard.EmptyClipboard()
@@ -117,210 +220,17 @@ def set_clipboard(text):
         win32clipboard.CloseClipboard()
 
 
-def get_lines():
-    data = get_clipboard()
-    for line in data.splitlines():
-        line = line.strip()   #.decode('utf-8', errors='ignore')
-        # if not line.isprintable():  # No longer needed as clipboard bug fixed above
-        #     continue
-        yield line
-
-
-def make_table (table, frameH = '-', frameV = '|', frameX = '+'):
-    cols = [list(x) for x in zip(*table)]
-    lengths = [max(map(len, map(str, col))) for col in cols]
-    f = frameV + frameV.join(' {:>%d} ' % l for l in lengths) + frameV
-    s = frameX + frameX.join(frameH * (l+2) for l in lengths) + frameX
-
-    output = StringIO()
-    output.write(s)
-    for row in table:
-        output.write(f.format(*row))
-        output.write(s)
-    return output
-
-
-def nlist2ranges(values, hex=False):
-    rlist = []
-
-    hexwidth = 0
-    for i in sorted(values, key=lambda x: int(x, 16) if hex else x):
-        if hex:
-            if len(i) > hexwidth: hexwidth = len(i)
-            i = int(i, 16)
-        if not rlist or rlist[-1][-1]+1 != i:
-            rlist.append([i])
-        else:
-            rlist[-1].append(i)
-    fmt = f'0{hexwidth}x' if hex else 'd'
-    return [ f'{x[0]:{fmt}}' if len(x)==1 else f'{x[0]:{fmt}}-{x[-1]:{fmt}}' for x in rlist ]
-
-
-def action_uniquelines(icon, item):
-    result = list()
-    count = 0
-    for line in get_lines():
-        if line not in result:
-            result.append(line)
-            count += 1
-    
-    if config['sort']:
-        result = sorted(result)
-    result = '\n'.join(result)
-    set_clipboard(result)
-    icon.notify(f'{count} unique lines', __appname__)
-    
-
-def action_lines2list(icon, item):
-    result = list()
-    count = 0
-    for line in get_lines():
-        if line not in result:
-            result.append(line)
-            count += 1
-    
-    if config['sort']:
-        result = sorted(result)
-    result = config['separator'].join(result)
-    set_clipboard(result)
-    icon.notify(f'{count} unique lines converted into long CSV list.', __appname__)
-
-
-def action_splitlines(icon, item):
-    result = list()
-    count = 0
-    for line in get_lines():
-        if line not in result:
-            result.extend(line.split(config['separator']))
-            count += 1
-    
-    if config['sort']:
-        result = sorted(result)
-    count = len(result) 
-    result = '\n'.join(result)
-    set_clipboard(result)
-    icon.notify(f'Text converted into {count} lines.', __appname__)
-
-
-def action_table2csv(icon, item):
-    result = list()
-    count = 0
-    pat_frameonly = re.compile(r'^[-+=\|\s]+$')
-    pat_leftframe = re.compile(r'^\s*\|\s*')
-    pat_rightframe = re.compile(r'\s*\|\s*$')
-    pat_bars = re.compile(r'\s*\|\s*')
-    altsep = '/' if config['separator'] == ',' else ','
-    for line in get_lines():
-        if pat_frameonly.match(line):   # skip lines with frame only
-            continue
-        line = pat_leftframe.sub('', line)   # get rid of left frames
-        line = pat_rightframe.sub('', line)   # get rid of right frames
-        line = line.replace(config['separator'], altsep)   # change separators before insertion
-        line = pat_bars.sub(config['separator'], line)   # change separators before insertion
-        result.append(line)
-        count += 1
-    
-    result = '\n'.join(result)
-    set_clipboard(result)
-    icon.notify(f'Table converted into {count} CSV rows.', __appname__)
-
-
-def action_csv2table(icon, item):
-    count = 0
-    result = ''
-    tables = list()
-    rows = list()
-    lastlen = 0
-    for line in get_lines():
-        if line and line not in result:
-            cols = line.split(config['separator'])
-            if lastlen and lastlen != len(cols):
-                tables.append(rows)
-                rows = list()
-            lastlen = len(cols)
-            rows.append(cols)
-            count += 1
-    tables.append(rows)
-        
-    for t in tables:
-        # transposed list of col lengths:
-        transpose = [ list(map(len, x)) for x in list(map(list, zip(*t))) ]
-        maxw = list(map(max, transpose))
-        table = texttable.Texttable()
-        table.set_cols_width(maxw)
-        table.set_cols_dtype([ 't' ] * len(maxw))
-        table.add_rows(t)
-        result += table.draw()
-        result += '\n'
-
-    set_clipboard(result)
-    icon.notify(f'CSV converted into {count} table rows.', __appname__)
-
-
-def action_hex2dec(icon, item):
-    icon.notify('Not yet implemented', __appname__)
-
-
-def action_dec2hex(icon, item):
-    icon.notify('Not yet implemented', __appname__)
-
-
-def action_ldev2list(icon, item):
-    pattern = re.compile('([0-9A-F]{4,6})', re.IGNORECASE)
-    result = list()
-    count = 0
-    for line in get_lines():
-        line = line.replace(':', '')
-        m = pattern.findall(line)
-        for ldev in m:
-            if len(ldev) == 6 and ldev.startswith('00'):
-                ldev = ldev[2:]
-            if ldev not in result:
-                result.append(ldev)
-                count += 1
-
-    if config['LDEV-ranges']:
-        result = nlist2ranges(result, hex=True)
-    elif config['sort']:
-        result = sorted(result)
-    
-    result = config['separator'].join(result)
-    set_clipboard(result)
-    icon.notify(f'{count} LDEVs converted into long CSV list.', __appname__)
-
-
-def action_wwnoui(icon, item, extractflag):
-    icon.notify('Not yet implemented', __appname__)
-
-
-def action_calculate(icon, item):
-    dp = locale.localeconv()['decimal_point']
-    pattern = re.compile(f'(0x[\da-f]+|\d+\.?\d*|\.\d+)', re.IGNORECASE)
-
-    def numfinder(dp=None):
-        for line in get_lines():
-            if dp:
-                line = line.replace(dp, '.')   # change from locale decimal sep to normnal
-
-            m = pattern.findall(line)
-            for n in m:
-                if '.' in n:
-                    yield float(n)
-                elif n.lower().startswith('0x'):
-                    yield int(n, 16)
-                else:
-                    yield int(n)
-
-    numbers = list(numfinder())  # try looking for normal first
-    if not numbers and dp != '.':   # else try using locale decimal point
-        numbers = list(numfinder(dp))
-
-    count = len(numbers)
-    tot = sum(numbers)
-    mean = tot / count if count > 0 else 'NA'
-    result = f'Count:{count:,d}\nsum:{tot:,f}\naverage:{mean:,f}\nmin:{min(numbers):,f}\nmax:{max(numbers):,f}\n'
-    set_clipboard(result)
-    icon.notify(result, __appname__)
+def readdata(type=None):
+    # Only supports text (at the moment)
+    data = get_clipboard_text()
+    if type == 'rawtext':
+        yield data
+    else:   # defaults to yielding lines of stripped text:
+        for line in data.splitlines():
+            line = line.strip()   #.decode('utf-8', errors='ignore')
+            # if not line.isprintable():  # No longer needed as clipboard bug fixed above
+            #     continue
+            yield line
 
     
 def action_setsort(icon, item):
@@ -331,14 +241,19 @@ def action_sethex(icon, item):
     config['hexprefix'] = not config['hexprefix']
     configsave()
 
-def action_setsep(separator):
+def setsep(separator):
     config['separator'] = separator
     configsave()
-
 
 def current_sep(separator):
     return config['separator'] == separator
 
+def setjoin(joiner):
+    config['joiner'] = joiner
+    configsave()
+
+def current_join(joiner):
+    return config['joiner'] == joiner
 
 def action_about(icon, item):
     win32ui.MessageBox(f'''
@@ -359,6 +274,18 @@ def action_exit(icon, item):
     icon.stop()
 
 
+def runmodule(icon, item):
+    global config
+
+    # text = list(readdata())
+    try:
+        result = moddict[item.text].main(readdata, icon.notify, config)
+    except Exception as exc:
+            win32ui.MessageBox(f'Error running {item.text}:\n\n{traceback.format_exc()}\n', __appname__)
+
+    set_clipboard_text(result)
+
+
 def getprogdir():
     """ 
     If the application is run as a bundle, the PyInstaller bootloader
@@ -372,8 +299,37 @@ def getprogdir():
         return os.path.dirname(os.path.abspath(sys.modules['__main__'].__file__))
 
 
-def trayapp():
-    global configdir, configpath
+def trayapp(menudef):
+
+    global moddict
+    image = Image.open(progdir / f'{__appname__}.png')
+
+    optmenu = st.Menu(*optmenuitems)
+    
+    menuitems = list()
+    for filename, description in menudef:
+        if filename.startswith('---'):
+            menuitems.append(st.Menu.SEPARATOR)
+        else:
+            # Dynamic import
+            spec = importlib.util.spec_from_file_location('module.name', filename)
+            moddict[description] = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(moddict[description])
+            menuitems.append(st.MenuItem(description, lambda icon, item: runmodule(icon, item)))
+    menuitems.extend( [st.Menu.SEPARATOR,
+            st.MenuItem('Options', optmenu),
+            st.MenuItem('About', action_about),
+            st.MenuItem('Exit', action_exit),
+        ] )
+
+    traymenu = st.Menu(*menuitems) 
+
+    app = st.Icon(__appname__, image, menu=traymenu)
+    return app.run()
+
+
+def klipchop():
+    global progdir, configdir, configpath
 
     progdir = Path(getprogdir())
 
@@ -382,58 +338,20 @@ def trayapp():
     if configpath.exists():
         configload()
 
-    image = Image.open(progdir / f'{__appname__}.png')
+    menu = readmenuconfig(progdir / 'transforms' / 'menu.config')
+    devcustom = progdir / 'custom' / 'menu.config'
+    prodcustom = configdir / 'custom' / 'menu.config'
+    if devcustom.is_file():  # use dev custom directory in development mode only.
+        menu.extend(readmenuconfig(devcustom))
+    elif prodcustom.is_file():
+        menu.extend(readmenuconfig(prodcustom))
 
-
-    sepmenu = st.Menu(
-        st.MenuItem('Comma ","', lambda: action_setsep(','), radio=True,
-            checked=lambda _: current_sep(',')),
-        st.MenuItem('Comma space ", "', lambda: action_setsep(', '), radio=True,
-            checked=lambda _: current_sep(', ')),
-        st.MenuItem('Space " "', lambda: action_setsep(' '), radio=True,
-            checked=lambda _: current_sep(' ')),
-        st.MenuItem('Semi-colon ";"', lambda: action_setsep(';'), radio=True,
-            checked=lambda _: current_sep(';')),
-        st.MenuItem('Forward-slash "/"', lambda: action_setsep('/'), radio=True,
-            checked=lambda _: current_sep('/')),
-        st.MenuItem('Back-slash "\\"', lambda: action_setsep('\\'), radio=True,
-            checked=lambda _: current_sep('\\')),
-        st.MenuItem('Bar "|"', lambda: action_setsep('|'), radio=True,
-            checked=lambda _: current_sep('|')),
-    )
-
-    mainmenu = st.Menu(
-        st.MenuItem('Unique lines', action_uniquelines), # default=True),
-        st.MenuItem('Lines to unique CSV list', action_lines2list),
-        st.MenuItem('Split CSV text to lines', action_splitlines),
-        st.Menu.SEPARATOR,
-        st.MenuItem('Table to CSV (converts ascii framed text)', action_table2csv),
-        st.MenuItem('CSV to text table (and the reverse)', action_csv2table),
-        st.Menu.SEPARATOR,
-        st.MenuItem('Hex to decimal', action_hex2dec),
-        st.MenuItem('Decimal to Hex', action_dec2hex),
-        st.Menu.SEPARATOR,
-        st.MenuItem('LDEV reduced to unique list', action_ldev2list),
-        st.MenuItem('Annotate WWN/NAA OUI', lambda icon,item: action_wwnoui(icon, item, False)),
-        st.MenuItem('Extract WWN/NAA OUI', lambda icon,item: action_wwnoui(icon, item, True)),
-        st.Menu.SEPARATOR,
-        st.MenuItem('Calculator (count, sum, min, max, average, median)', action_calculate),
-        st.Menu.SEPARATOR,
-        st.MenuItem('Sort results', action_setsort, checked=lambda x: config['sort']),
-        st.MenuItem('Prefix Hex with 0x', action_sethex, checked=lambda x: config['hexprefix']),
-        st.MenuItem('Reduce LDEV ranges', action_setsort, checked=lambda x: config['LDEV-ranges']),
-        st.MenuItem('Separator', sepmenu),
-        st.Menu.SEPARATOR,
-        st.MenuItem('About', action_about),
-        st.MenuItem('Exit', action_exit),
-        )
-
-    app = st.Icon(__appname__, image, menu=mainmenu)
-    return app.run()
+    trayapp(menu)
 
 
 if __name__ == '__main__':
-    trayapp()
+    klipchop()
+
 
 
 
