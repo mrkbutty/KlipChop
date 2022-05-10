@@ -57,7 +57,7 @@ __author__ = "Mark Butterworth"
 __email__ = 'mark@markbutterworth.net'
 __copyright__ = "Copyright (C) 2021 Mark Butterworth"
 __license__ = "MIT"
-__version__ = '1.0.0 20220322'
+__version__ = '1.0.0 20220510'
 
 
 # Setup later:
