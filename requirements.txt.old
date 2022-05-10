@@ -3,9 +3,9 @@ cx-Logging==3.0
 gitdb==4.0.9
 GitPython==3.1.27
 ouilookup==0.2.4
-Pillow==9.0.1
-pystray==0.19.3
-pywin32==303
+Pillow==8.4.0
+pystray==0.18.0
+pywin32==302
 PyYAML==6.0
 six==1.16.0
 smmap==5.0.0

@@ -3,7 +3,7 @@
 
 #define MyAppName "KlipChop"
 #define MyAppExeName "KlipChop.exe"
-#define MyAppPublisher "Mark Butterworth"
+#define MyAppPublisher "Butty"
 #define MyParentDir "C:\GSCtools"
 #define MyDistDir "dist"
 #define MyOutputDir "setup"
@@ -19,8 +19,9 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 ;AppVerName={#MyAppName} {#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-DefaultDirName={#MyParentDir}\{#MyAppName}
-DisableDirPage=yes
+;DefaultDirName={#MyParentDir}\{#MyAppName}
+DefaultDirName={autopf}\{#MyAppName}
+;DisableDirPage=yes
 AlwaysShowDirOnReadyPage=yes
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
@@ -50,7 +51,7 @@ Filename: "{app}\{#MyAppName}.exe"; Description: "{cm:LaunchProgram,KlipChop}"; 
 Filename: "notepad.exe"; Parameters: "{app}\README.md"; Description: "Open README.md in notepad"; Flags: postinstall skipifsilent
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppName}.exe"; Comment: "{#MyAppName}"
+Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppName}.exe"; Comment: "{#MyAppName}"
 ; NOTE "userstartup" can specific just for install user or "commonstartup" for everyone:
 Name: "{commonstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppName}.exe";Comment: "{#MyAppName}"
 

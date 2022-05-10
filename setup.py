@@ -39,13 +39,22 @@ if command not in ('freeze', 'setup', 'both'):
     raise SystemExit('ERROR: specify: setup.py <freeze|setup|both>')
 
 
+# Fix so that pywintypesxxx.dll is copied:
+from cx_Freeze import hooks
+def load_win32clipboard(finder, module):
+    finder.IncludeModule("pywintypes")
+
+hooks.load_win32clipboard = load_win32clipboard
+
 ############### CX_FREEZE BUILD ###############
+
+
 
 # Dependencies are automatically detected, but it might need
 # fine tuning.
 build_options = {
     'build_exe': 'dist',   # directory to freeze into
-    'packages': ['pystray'],
+    'packages': ['pystray', 'OuiLookup'],
     'zip_include_packages': '*',
     'zip_exclude_packages': 'pystray',
     'excludes': ['tkinter'],
@@ -55,6 +64,9 @@ build_options = {
         'README.md', 
         'LICENSE',
         'releasenotes.txt',
+        'docs',
+        'transforms',
+        'custom',
         ]
     }
 
